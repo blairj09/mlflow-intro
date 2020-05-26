@@ -1,0 +1,229 @@
+---
+title: "mlflow + R: A Case Study"
+output: html_notebook
+---
+
+## Introduction
+A brief walkthrough of using `mlflow` from R for building robust machine
+learning pipelines. This is meant to be a starting point rather than a
+comprehensive guide. Full details about mlflow can be found in the [mlflow
+documentation](https://www.mlflow.org/docs/latest/index.html).
+
+## Environment
+This example makes use of the following R packages:
+  + `mlflow`
+  + `carrier`
+  + `tidyverse`
+  + `tidymodels`
+  + `pins`
+  + `fs`
+  + `randomForest`
+The `mlflow` R package depends on `mlflow`, which can be installed by running
+`mlflow::install_mlflow()`.
+
+## Data
+The example and associated data come from Julia Silge's updated [Supervised ML Course](https://supervised-ml-course.netlify.app/).
+
+---
+
+# Cars
+
+```{r setup}
+# Packages ----
+library(mlflow)
+library(carrier)
+library(tidyverse)
+library(tidymodels)
+library(fs)
+library(pins)
+
+# Plotting ----
+theme_set(theme_bw())
+```
+
+## mlflow setup
+Create an mlflow experiment
+```{r}
+mlflow_set_experiment("cars2018")
+artifact_dir <- dir_create("mlflow-artifacts")
+```
+
+## Data
+```{r data}
+cars2018 <- read_csv(pin("https://raw.githubusercontent.com/juliasilge/supervised-ML-case-studies-course/master/data/cars2018.csv"))
+```
+
+```{r}
+(p <- ggplot(cars2018, aes(x = MPG)) +
+  geom_histogram(bins = 25) +
+  labs(title = "Fuel Efficiency",
+       x = "Fuel efficiency (mpg)",
+       y = "Number of cars"))
+
+ggsave("mpg-hist.png", p, path = artifact_dir)
+```
+
+## tidymodels
+### Data split
+```{r}
+set.seed(1234)
+cars_vars <- cars2018 %>% 
+  select(-Model, -`Model Index`)
+
+car_split <- cars_vars %>% 
+  initial_split(prop = 0.8, strata = Aspiration)
+
+car_train <- training(car_split)
+car_test <- testing(car_split)
+
+glimpse(car_train)
+glimpse(car_test)
+```
+
+### Model fit
+#### Linear Model
+```{r}
+
+
+lm_mod <- linear_reg() %>% 
+  set_engine("lm")
+
+fit_lm <- lm_mod %>% 
+  fit(log(MPG) ~ ., data = car_train)
+
+fit_lm
+```
+
+#### Random Forest
+```{r}
+rf_mod <- rand_forest() %>% 
+  set_engine("randomForest") %>% 
+  set_mode("regression")
+
+fit_rf <- rf_mod %>% 
+  fit(log(MPG) ~ ., data = car_train)
+
+fit_rf
+```
+
+#### Model Evaluation
+```{r}
+train_results <- car_train %>%
+    mutate(MPG = log(MPG)) %>%
+    bind_cols(predict(fit_lm, car_train) %>%
+                  rename(.pred_lm = .pred)) %>%
+    bind_cols(predict(fit_rf, car_train) %>%
+                  rename(.pred_rf = .pred))
+
+# Evaluate the performance
+metrics(train_results, truth = MPG, estimate = .pred_lm)
+metrics(train_results, truth = MPG, estimate = .pred_rf)
+```
+
+```{r}
+test_results <- car_test %>%
+    mutate(MPG = log(MPG)) %>%
+    bind_cols(predict(fit_lm, car_test) %>%
+                  rename(.pred_lm = .pred)) %>%
+    bind_cols(predict(fit_rf, car_test) %>%
+                  rename(.pred_rf = .pred))
+
+# Evaluate the performance
+metrics(test_results, truth = MPG, estimate = .pred_lm)
+metrics(test_results, truth = MPG, estimate = .pred_rf)
+```
+
+
+### Model fit w/ mlflow
+Use `with(mlflow_start_run())` to record details to a specific mlflow run
+#### Linear Model
+```{r}
+with(mlflow_start_run(), {
+  
+  lm_mod <- linear_reg() %>% 
+    set_engine("lm")
+  
+  fit_lm <- lm_mod %>% 
+    fit(log(MPG) ~ ., data = car_train)
+  
+  train_results <- car_train %>%
+    mutate(MPG = log(MPG)) %>%
+    bind_cols(predict(fit_lm, car_train)) 
+  
+  test_results <- car_test %>%
+    mutate(MPG = log(MPG)) %>% 
+    bind_cols(predict(fit_lm, car_test))
+  
+  train_metrics <- metrics(train_results, truth = MPG, estimate = .pred)
+  test_metrics <- metrics(test_results, truth = MPG, estimate = .pred)
+  
+  mlflow_log_metric("train_rmse", train_metrics %>% 
+                      filter(.metric == "rmse") %>% 
+                      pull(.estimate))
+  mlflow_log_metric("test_rmse", test_metrics %>% 
+                      filter(.metric == "rmse") %>% 
+                      pull(.estimate))
+  
+  mlflow_predictor <- carrier::crate(~stats::predict(model, .x), model = fit_lm$fit)
+  mlflow_log_model(mlflow_predictor, artifact_path = "model")
+})
+```
+
+```{r}
+mlflow_ui()
+```
+
+```{r}
+model <- mlflow_load_model("/Users/jamesblair/Documents/RStudio/repos/mlflow-intro/R/mlruns/1/8d7ff225ac9643b29ed93d173d4f1874/artifacts/model")
+
+mlflow_predict(model, car_test)
+```
+
+
+
+#### Random Forest
+```{r}
+with(mlflow_start_run(), {
+  rf_mod <- rand_forest() %>% 
+    set_engine("randomForest") %>% 
+    set_mode("regression")
+  
+  fit_rf <- rf_mod %>% 
+    fit_xy(y = log(car_train$MPG), x = car_train %>% select(-MPG))
+  
+  train_results <- car_train %>%
+    mutate(MPG = log(MPG)) %>%
+    bind_cols(predict(fit_rf, car_train)) 
+  
+  test_results <- car_test %>%
+    mutate(MPG = log(MPG)) %>% 
+    bind_cols(predict(fit_rf, car_test))
+  
+  train_metrics <- metrics(train_results, truth = MPG, estimate = .pred)
+  test_metrics <- metrics(test_results, truth = MPG, estimate = .pred)
+  
+  mlflow_log_metric("train_rmse", train_metrics %>% 
+                      filter(.metric == "rmse") %>% 
+                      pull(.estimate))
+  mlflow_log_metric("test_rmse", test_metrics %>% 
+                      filter(.metric == "rmse") %>% 
+                      pull(.estimate))
+  
+  mlflow_predictor <- crate(~randomForest:::predict.randomForest(model), model = fit_rf$fit)
+  mlflow_log_model(mlflow_predictor, artifact_path = "model")
+})
+```
+
+View the mlflow UI
+```{r}
+mlflow_ui()
+```
+
+Fetch model from mlflow
+```{r}
+model <- mlflow_load_model("/Users/jamesblair/Documents/RStudio/repos/mlflow-intro/R/mlruns/1/50d616c535734fe7920dee2e583a136b/artifacts/model")
+
+mlflow_predict(model, car_test)
+```
+
+

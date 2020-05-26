@@ -1,0 +1,4 @@
+artifact_location: /Users/jamesblair/Documents/RStudio/repos/mlflow-intro/R/mlruns/1
+experiment_id: '1'
+lifecycle_stage: active
+name: cars2018

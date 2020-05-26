@@ -1,0 +1,15 @@
+artifact_uri: /Users/jamesblair/Documents/RStudio/repos/mlflow-intro/R/mlruns/1/827bd05ea91143c0894672a8b85960df/artifacts
+end_time: 1590120790283
+entry_point_name: ''
+experiment_id: '1'
+lifecycle_stage: deleted
+name: ''
+run_id: 827bd05ea91143c0894672a8b85960df
+run_uuid: 827bd05ea91143c0894672a8b85960df
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1590120788492
+status: 3
+tags: []
+user_id: jamesblair
